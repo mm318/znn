@@ -684,19 +684,22 @@ pub fn loadCompatProfileExt(loader: LoaderFn) !void {
     try load("glVertex4fv", .{&bindings.vertex4fv});
     try load("glColor3fv", .{&bindings.color3fv});
     try load("glColor4fv", .{&bindings.color4fv});
-    try load("glRectf", .{&bindings.rectf});
-    try load("glMatrixMode", .{&bindings.matrixMode});
     try load("glVertex2f", .{&bindings.vertex2f});
     try load("glVertex2d", .{&bindings.vertex2d});
     try load("glVertex2i", .{&bindings.vertex2i});
+    try load("glVertex3f", .{&bindings.vertex3f});
+    try load("glRectf", .{&bindings.rectf});
     try load("glColor3f", .{&bindings.color3f});
     try load("glColor4f", .{&bindings.color4f});
     try load("glColor4ub", .{&bindings.color4ub});
+    try load("glMatrixMode", .{&bindings.matrixMode});
     try load("glPushMatrix", .{&bindings.pushMatrix});
     try load("glPopMatrix", .{&bindings.popMatrix});
+    try load("glFrustum", .{&bindings.frustum});
     try load("glRotatef", .{&bindings.rotatef});
     try load("glScalef", .{&bindings.scalef});
     try load("glTranslatef", .{&bindings.translatef});
+
     try load("glMatrixLoadIdentityEXT", .{&bindings.matrixLoadIdentityEXT});
     try load("glMatrixOrthoEXT", .{&bindings.matrixOrthoEXT});
 }
