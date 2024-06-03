@@ -47,7 +47,7 @@ fn display() !void {
     var win_width: c_int = undefined;
     var win_height: c_int = undefined;
     SDL.SDL_GetWindowSize(window, &win_width, &win_height);
-    try Visualizer.init(getProcAddress, win_width, win_height);
+    Visualizer.init(getProcAddress, win_width, win_height);
 
     mainLoop: while (true) {
         var ev: SDL.SDL_Event = undefined;
@@ -65,6 +65,27 @@ fn display() !void {
                         },
                         else => {},
                     }
+                },
+                SDL.SDL_MOUSEBUTTONUP, SDL.SDL_MOUSEBUTTONDOWN => {
+                    var button: Visualizer.MouseButton = .left;
+                    if (ev.button.button == SDL.SDL_BUTTON_MIDDLE) {
+                        button = .middle;
+                    } else if (ev.button.button == SDL.SDL_BUTTON_RIGHT) {
+                        button = .right;
+                    }
+
+                    var action: Visualizer.MouseButtonAction = .{ .click = .{ .x = ev.button.x, .y = ev.button.y } };
+                    if (ev.button.type == SDL.SDL_MOUSEBUTTONUP) {
+                        action = .{ .release = .{ .x = ev.button.x, .y = ev.button.y } };
+                    }
+
+                    Visualizer.handleMouseButton(button, action);
+                },
+                SDL.SDL_MOUSEWHEEL => {
+                    Visualizer.handleMouseButton(.middle, .{ .wheel_motion = .{ .dx = ev.wheel.x, .dy = ev.wheel.y } });
+                },
+                SDL.SDL_MOUSEMOTION => {
+                    Visualizer.handleMouseMotion(ev.motion.x, ev.motion.y);
                 },
                 SDL.SDL_KEYDOWN => {
                     switch (ev.key.keysym.scancode) {
