@@ -2,22 +2,12 @@ const std = @import("std");
 const zopengl = @import("zopengl");
 const gl = zopengl.bindings;
 
-// pub var xRotated: gl.Float = undefined;
-// pub var yRotated: gl.Float = 40;
-// pub var zRotated: gl.Float = undefined;
-
 var _top: gl.Double = 0.0;
 var _bottom: gl.Double = 0.0;
 var _left: gl.Double = 0.0;
 var _right: gl.Double = 0.0;
 var _zNear: gl.Double = -10.0;
 var _zFar: gl.Double = 10.0;
-
-// fn gluPerspective(fovy: gl.Double, aspect: gl.Double, near: gl.Double, far: gl.Double) void {
-//     const half_height = near * std.math.tan(fovy * 0.5 * std.math.pi / 180);
-//     const half_width = half_height * aspect;
-//     gl.frustum(-half_width, half_width, -half_height, half_height, near, far);
-// }
 
 pub fn initView(display_width: gl.Sizei, display_height: gl.Sizei) void {
     Controller.getMatrix();
@@ -37,18 +27,8 @@ pub fn reshapeView(display_width: gl.Sizei, display_height: gl.Sizei) void {
     gl.matrixMode(gl.PROJECTION); // Set a new projection matrix
     gl.loadIdentity();
     gl.frustum(_left,_right,_bottom,_top,_zNear,_zFar);
-    // gluPerspective(40.0, x / y, 0.5, 20.0); // Angle of view:40 degrees
 
     gl.matrixMode(gl.MODELVIEW);
-    // // clear the identity matrix.
-    // gl.loadIdentity();
-    // traslate the draw by z = -4.0
-    // Note this when you decrease z like -8.0 the drawing will looks far , or smaller.
-    // gl.translatef(-1.0, -0.75, -3.5); // -1.6 for scaling of 2.3
-    // // Red color used to draw.
-    // gl.color3f(0.8, 0.2, 0.1);
-    // gl.rotatef(40, 0.0, 1.0, 0.0);
-    // gl.scalef(2.0, 2.0, 2.0);
 }
 
 // based on glt zpr code
@@ -156,7 +136,6 @@ pub const Controller = struct {
 
             gl.loadIdentity();
             gl.translatef(@floatCast(px - _dragPosX), @floatCast(py - _dragPosY), @floatCast(pz - _dragPosZ));
-            // std.log.debug("translatef: {} - {}, {} - {}, {} - {}", .{px, _dragPosX, py, _dragPosY, pz, _dragPosZ});
             gl.multMatrixd(&_matrix);
 
             _dragPosX = px;
@@ -165,13 +144,12 @@ pub const Controller = struct {
 
             changed = true;
         }
-
-        _mouseX = x;
-        _mouseY = y;
-
         if (changed) {
             getMatrix();
         }
+
+        _mouseX = x;
+        _mouseY = y;
     }
 
     fn zoom(dy: i32) void {
@@ -197,7 +175,6 @@ pub const Controller = struct {
         // to map from mouse co-ordinates back into world
         // co-ordinates
 
-        // std.log.debug("viewport: {} {} {} {}", .{viewport[0], viewport[1], viewport[2], viewport[3]});
         px.* = @as(gl.Double, @floatFromInt(x - viewport[0])) / @as(gl.Double, @floatFromInt(viewport[2]));
         py.* = @as(gl.Double, @floatFromInt(y - viewport[1])) / @as(gl.Double, @floatFromInt(viewport[3]));
 
@@ -282,4 +259,5 @@ pub const Controller = struct {
 };
 
 pub fn view() void {
+    // the Controller handles this
 }
