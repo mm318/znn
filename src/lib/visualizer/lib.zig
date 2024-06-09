@@ -1,21 +1,21 @@
 const std = @import("std");
 const zopengl = @import("zopengl");
+const Camera = @import("camera.zig");
 
 const gl = zopengl.bindings;
 
 var flag = true;
-var xRotated: gl.Float = undefined;
-var yRotated: gl.Float = undefined;
-var zRotated: gl.Float = undefined;
 
-pub fn init(loader: zopengl.LoaderFn, display_width: gl.Sizei, display_height: gl.Sizei) !void {
-    try zopengl.loadCompatProfileExt(loader);
+pub fn init(loader: zopengl.LoaderFn, display_width: gl.Sizei, display_height: gl.Sizei) void {
+    zopengl.loadCompatProfileExt(loader) catch |err| {
+        std.log.err("{}", .{err});
+        @panic("error loading opengl functions");
+    };
     gl.polygonMode(gl.FRONT_AND_BACK, gl.LINE);
     gl.clearColor(0.0, 0.0, 0.0, 0.0);
     gl.enable(gl.BLEND);
     gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-    yRotated = 40;
-    reshapeNetwork(display_width, display_height);
+    Camera.initView(display_width, display_height);
 }
 
 fn highlightLines(x: gl.Float, y: gl.Float, z: gl.Float, live_transparency_line: gl.Float) void {
@@ -87,18 +87,8 @@ fn highlightLines(x: gl.Float, y: gl.Float, z: gl.Float, live_transparency_line:
 }
 
 pub fn dislayNetwork(_: gl.Sizei, _: gl.Sizei) void {
-    gl.matrixMode(gl.MODELVIEW);
     // clear the drawing buffer.
     gl.clear(gl.COLOR_BUFFER_BIT);
-    // clear the identity matrix.
-    gl.loadIdentity();
-    // traslate the draw by z = -4.0
-    // Note this when you decrease z like -8.0 the drawing will looks far , or smaller.
-    gl.translatef(-1.0, -0.75, -3.5); // -1.6 for scaling of 2.3
-    // Red color used to draw.
-    gl.color3f(0.8, 0.2, 0.1);
-    gl.rotatef(yRotated, 0.0, 1.0, 0.0);
-    gl.scalef(2.0, 2.0, 2.0);
 
     const dead_transparency_line = 0.08;
     const live_transparency_line = 0.15;
@@ -252,26 +242,26 @@ pub fn dislayNetwork(_: gl.Sizei, _: gl.Sizei) void {
     gl.flush();
 }
 
-fn gluPerspective(fovy: gl.Double, aspect: gl.Double, near: gl.Double, far: gl.Double) void {
-    const half_height = near * std.math.tan(fovy * 0.5 * std.math.pi / 180);
-    const half_width = half_height * aspect;
-    gl.frustum(-half_width, half_width, -half_height, half_height, near, far);
-}
-
 pub fn reshapeNetwork(display_width: gl.Sizei, display_height: gl.Sizei) void {
     // std.log.info("width: {}. height: {}", .{ display_width, display_height });
     if (display_width == 0 or display_height == 0) {
         return; // Nothing is visible then, so return
     }
-    gl.matrixMode(gl.PROJECTION); // Set a new projection matrix
-    gl.loadIdentity();
-    const x: gl.Double = @floatFromInt(display_width);
-    const y: gl.Double = @floatFromInt(display_height);
-    gluPerspective(40.0, x / y, 0.5, 20.0); // Angle of view:40 degrees
-    gl.viewport(0, 0, display_width, display_height); // Use the whole window for rendering
+    Camera.reshapeView(display_width, display_height);
 }
 
 pub fn idleNetwork(display_width: gl.Sizei, display_height: gl.Sizei) void {
-    yRotated += 0.05;
     dislayNetwork(display_width, display_height);
+    Camera.view();
+}
+
+pub const MouseButton = Camera.Controller.Button;
+pub const MouseButtonAction = Camera.Controller.ButtonAction;
+
+pub fn handleMouseMotion(x: i32, y: i32) void {
+    Camera.Controller.handleMouseMotion(x, y);
+}
+
+pub fn handleMouseButton(button: MouseButton, action: MouseButtonAction) void {
+    Camera.Controller.handleMouseButton(button, action);
 }

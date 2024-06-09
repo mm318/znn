@@ -695,6 +695,7 @@ pub fn loadCompatProfileExt(loader: LoaderFn) !void {
     try load("glMatrixMode", .{&bindings.matrixMode});
     try load("glPushMatrix", .{&bindings.pushMatrix});
     try load("glPopMatrix", .{&bindings.popMatrix});
+    try load("glMultMatrixd", .{&bindings.multMatrixd});
     try load("glFrustum", .{&bindings.frustum});
     try load("glRotatef", .{&bindings.rotatef});
     try load("glScalef", .{&bindings.scalef});
@@ -1016,6 +1017,7 @@ var loaderFunc: LoaderFn = undefined;
 
 fn getProcAddress(comptime T: type, proc_name: [:0]const u8) !T {
     if (loaderFunc(proc_name)) |addr| {
+        // std.log.debug("zopengl: {s} found at {}", .{proc_name, addr});
         return @as(T, @ptrFromInt(@intFromPtr(addr)));
     }
     std.log.debug("zopengl: {s} not found", .{proc_name});
