@@ -1,16 +1,26 @@
 const std = @import("std");
-const zopengl = @import("zopengl");
-const Camera = @import("camera.zig");
 
+const zopengl = @import("zopengl");
 const gl = zopengl.bindings;
 
-var flag = true;
+const NeuralNetwork = @import("../lib.zig").NeuralNetwork;
+const Camera = @import("camera.zig");
 
-pub fn init(loader: zopengl.LoaderFn, display_width: gl.Sizei, display_height: gl.Sizei) void {
+var neural_network: ?NeuralNetwork = null;
+var show_activity_flag = false;
+var rng_impl: std.Random.DefaultPrng = undefined;
+var rng: std.Random = undefined;
+
+pub fn init(loader: zopengl.LoaderFn, display_width: gl.Sizei, display_height: gl.Sizei, nn: NeuralNetwork) void {
     zopengl.loadCompatProfileExt(loader) catch |err| {
         std.log.err("{}", .{err});
         @panic("error loading opengl functions");
     };
+
+    neural_network = nn;
+    rng_impl = std.Random.DefaultPrng.init(@intCast(std.time.timestamp()));
+    rng = rng_impl.random();
+
     gl.polygonMode(gl.FRONT_AND_BACK, gl.LINE);
     gl.clearColor(0.0, 0.0, 0.0, 0.0);
     gl.enable(gl.BLEND);
@@ -18,68 +28,70 @@ pub fn init(loader: zopengl.LoaderFn, display_width: gl.Sizei, display_height: g
     Camera.initView(display_width, display_height);
 }
 
-fn highlightLines(x: gl.Float, y: gl.Float, z: gl.Float, live_transparency_line: gl.Float) void {
-    var a: gl.Float = 0;
-    while (a <= 0.5) : (a += 0.1) {
-        var b: gl.Float = 0;
-        while (b <= 0.5) : (b += 0.1) {
-            var c: gl.Float = 0;
-            while (c <= 0.5) : (c += 0.1) {
-                //First Hidden Layer Plane 1
-                gl.pointSize(3.0);
-                gl.begin(gl.POINTS);
-                gl.color4f(1.0, 1.0, 1.0, 0.05);
-                gl.vertex3f(0.1 + b, 0.1 + c, 0.4);
-                gl.vertex3f(0.1 + b, 0.1 + c, 0.4);
-                gl.end();
-                gl.begin(gl.LINE_LOOP);
-                gl.color4f(1.0, 1.0, 1.0, live_transparency_line);
-                gl.vertex3f(x, y, z);
-                gl.vertex3f(0.1 + b, 0.1 + c, 0.4);
-                gl.vertex3f(0.1 + b, 0.1 + c, 0.4);
-                gl.end();
+const x_spacing: gl.Float = 0.1;
+const y_spacing: gl.Float = 0.1;
+const z_spacing: gl.Float = 0.4;
+const dead_line_transparency = 0.08;
+const live_line_transparency = 0.15;
 
-                //First Hidden Layer Plane 4
-                if (c < 0.44) {
-                    gl.pointSize(3.0);
-                    gl.begin(gl.POINTS);
-                    gl.vertex3f(x, y, z);
-                    gl.vertex3f(0.17 + b, 0.16 + c, 0.44);
-                    gl.vertex3f(0.17 + b, 0.16 + c, 0.44);
-                    gl.end();
-                    gl.begin(gl.LINE_LOOP);
-                    gl.color4f(1.0, 1.0, 1.0, live_transparency_line);
-                    gl.vertex3f(x, y, z);
-                    gl.vertex3f(0.17 + b, 0.16 + c, 0.44);
-                    gl.vertex3f(0.17 + b, 0.16 + c, 0.44);
-                    gl.end();
+fn nodePosition(neuron: NeuralNetwork.Neuron, grid_dim: usize) struct { gl.Float, gl.Float } {
+    const x_offset: gl.Float = @as(gl.Float, @floatFromInt(grid_dim - 1)) * x_spacing / 2;
+    const y_offset: gl.Float = @as(gl.Float, @floatFromInt(grid_dim - 1)) * y_spacing / 2;
+    return .{
+        @as(gl.Float, @floatFromInt(neuron.coords.x)) * x_spacing - x_offset,
+        @as(gl.Float, @floatFromInt(neuron.coords.y)) * y_spacing - y_offset,
+    };
+}
+
+fn drawNodes() void {
+    gl.color4f(1.0, 1.0, 1.0, 0.05);
+
+    for (0..neural_network.?.layers.len) |layer_id| {
+        // std.log.debug("layer {} has {} neurons", .{layer_id, neural_network.?.layers[layer_id].len});
+
+        if (layer_id == 0 or layer_id == neural_network.?.layers.len - 1) {
+            gl.pointSize(15.0); // if input or output layer
+        } else {
+            gl.pointSize(3.0); // if not input or output layer
+        }
+
+        const z = @as(gl.Float, @floatFromInt(layer_id)) * z_spacing;
+        const layer_grid_dim: usize = @intFromFloat(@ceil(@sqrt(@as(f32, @floatFromInt(neural_network.?.layers[layer_id].len)))));
+
+        gl.begin(gl.POINTS);
+        for (0..neural_network.?.layers[layer_id].len) |neuron_id| {
+            const neuron = neural_network.?.layers[layer_id][neuron_id];
+            std.debug.assert(neuron.id.layer == layer_id);
+            std.debug.assert(neuron.id.neuron == neuron_id);
+            const pos = nodePosition(neuron, layer_grid_dim);
+            gl.vertex3f(pos[0], pos[1], z);
+        }
+        gl.end();
+    }
+}
+
+fn drawEdges() void {
+    for (1..neural_network.?.layers.len) |dst_layer_id| {
+        const src_layer_id = dst_layer_id - 1;
+        const src_z = @as(gl.Float, @floatFromInt(src_layer_id)) * z_spacing;
+        const dst_z = @as(gl.Float, @floatFromInt(dst_layer_id)) * z_spacing;
+        const src_layer_grid_dim: usize = @intFromFloat(@ceil(@sqrt(@as(f32, @floatFromInt(neural_network.?.layers[src_layer_id].len)))));
+        const dst_layer_grid_dim: usize = @intFromFloat(@ceil(@sqrt(@as(f32, @floatFromInt(neural_network.?.layers[dst_layer_id].len)))));
+        for (0..neural_network.?.layers[src_layer_id].len) |src_neuron_id| {
+            const src_neuron = neural_network.?.layers[src_layer_id][src_neuron_id];
+            const src_pos = nodePosition(src_neuron, src_layer_grid_dim);
+            for (0..neural_network.?.layers[dst_layer_id].len) |dst_neuron_id| {
+                const dst_neuron = neural_network.?.layers[dst_layer_id][dst_neuron_id];
+                const dst_pos = nodePosition(dst_neuron, dst_layer_grid_dim);
+
+                gl.begin(gl.LINES);
+                if (show_activity_flag and rng.float(f32) < 0.05) {
+                    gl.color4f(1.0, 0.0, 0.0, live_line_transparency);
+                } else {
+                    gl.color4f(1.0, 1.0, 1.0, dead_line_transparency);
                 }
-
-                //Second Hidden Layer Plane 1
-                gl.pointSize(3.0);
-                gl.begin(gl.POINTS);
-                gl.color4f(1.0, 1.0, 1.0, 0.05);
-                gl.vertex3f(0.1 + b, 0.1 + c, 0.8);
-                gl.vertex3f(0.1 + b, 0.1 + c, 0.8);
-                gl.end();
-                gl.begin(gl.LINE_LOOP);
-                gl.color4f(1.0, 1.0, 1.0, live_transparency_line);
-                gl.vertex3f(0.1 + b, 0.1 + a, 0.4);
-                gl.vertex3f(0.1 + b, 0.1 + c, 0.8);
-                gl.vertex3f(0.1 + b, 0.1 + c, 0.8);
-                gl.end();
-
-                //output layer
-                gl.pointSize(20.0);
-                gl.begin(gl.POINTS);
-                gl.color4f(0.0, 0.0, 1.0, 1.0);
-                gl.vertex3f(0.2, 0.35, 1.2);
-                gl.end();
-                gl.begin(gl.LINE_LOOP);
-                gl.color4f(1.0, 1.0, 1.0, live_transparency_line);
-                gl.vertex3f(0.1 + b, 0.1 + a, 0.8);
-                gl.vertex3f(0.2, 0.35, 1.2);
-                gl.vertex3f(0.2, 0.35, 1.2);
+                gl.vertex3f(src_pos[0], src_pos[1], src_z);
+                gl.vertex3f(dst_pos[0], dst_pos[1], dst_z);
                 gl.end();
             }
         }
@@ -90,153 +102,8 @@ pub fn dislayNetwork(_: gl.Sizei, _: gl.Sizei) void {
     // clear the drawing buffer.
     gl.clear(gl.COLOR_BUFFER_BIT);
 
-    const dead_transparency_line = 0.08;
-    const live_transparency_line = 0.15;
-    var a: gl.Float = 0;
-    while (a <= 0.5) : (a += 0.1) {
-        var b: gl.Float = 0;
-        while (b <= 0.5) : (b += 0.1) {
-            var c: gl.Float = 0;
-            while (c <= 0.5) : (c += 0.1) {
-                //Input Layer
-                gl.pointSize(15.0);
-                gl.begin(gl.POINTS);
-                gl.color4f(1.0, 1.0, 1.0, 0.05);
-                gl.vertex3f(0.1 + b, 0.1 + a, 0.0);
-                gl.end();
-
-                //First Hidden Layer Plane 1
-                gl.pointSize(3.0);
-                gl.begin(gl.POINTS);
-                gl.color4f(1.0, 1.0, 1.0, 0.05);
-                gl.vertex3f(0.1 + b, 0.1 + c, 0.4);
-                gl.end();
-                gl.begin(gl.LINE_LOOP);
-                gl.color4f(1.0, 1.0, 1.0, dead_transparency_line);
-                gl.vertex3f(0.1 + b, 0.1 + a, 0.0);
-                gl.vertex3f(0.1 + b, 0.1 + c, 0.4);
-                gl.vertex3f(0.1 + b, 0.1 + c, 0.4);
-                gl.end();
-
-                //First Hidden Layer Plane 2
-                if (c < 0.47) {
-                    gl.pointSize(3.0);
-                    gl.begin(gl.POINTS);
-                    gl.vertex3f(0.1 + b, 0.1 + a, 0.0);
-                    gl.vertex3f(0.13 + b, 0.13 + c, 0.42);
-                    gl.end();
-                    gl.begin(gl.LINE_LOOP);
-                    gl.color4f(1.0, 1.0, 1.0, dead_transparency_line);
-                    gl.vertex3f(0.1 + b, 0.1 + a, 0.0);
-                    gl.vertex3f(0.13 + b, 0.13 + c, 0.42);
-                    gl.vertex3f(0.13 + b, 0.13 + c, 0.42);
-                    gl.end();
-                }
-
-                //First Hidden Layer Plane 3
-                gl.pointSize(3.0);
-                gl.begin(gl.POINTS);
-                gl.vertex3f(0.1 + b, 0.1 + a, 0.0);
-                gl.vertex3f(0.07 + b, 0.07 + c, 0.42);
-                gl.vertex3f(0.07 + b, 0.07 + c, 0.42);
-                gl.end();
-                gl.begin(gl.LINE_LOOP);
-                gl.color4f(1.0, 1.0, 1.0, dead_transparency_line);
-                gl.vertex3f(0.1 + b, 0.1 + a, 0.0);
-                gl.vertex3f(0.07 + b, 0.07 + c, 0.42);
-                gl.vertex3f(0.07 + b, 0.07 + c, 0.42);
-                gl.end();
-
-                //First Hidden Layer Plane 4
-                if (c < 0.44) {
-                    gl.pointSize(3.0);
-                    gl.begin(gl.POINTS);
-                    gl.vertex3f(0.1 + b, 0.1 + a, 0.0);
-                    gl.vertex3f(0.17 + b, 0.16 + c, 0.44);
-                    gl.vertex3f(0.17 + b, 0.16 + c, 0.44);
-                    gl.end();
-                    gl.begin(gl.LINE_LOOP);
-                    gl.color4f(1.0, 1.0, 1.0, dead_transparency_line);
-                    gl.vertex3f(0.1 + b, 0.1 + a, 0.0);
-                    gl.vertex3f(0.17 + b, 0.16 + c, 0.44);
-                    gl.vertex3f(0.17 + b, 0.16 + c, 0.44);
-                    gl.end();
-                }
-
-                //Second Hidden Layer Plane 1
-                gl.pointSize(3.0);
-                gl.begin(gl.POINTS);
-                gl.color4f(1.0, 1.0, 1.0, 0.05);
-                gl.vertex3f(0.1 + b, 0.1 + c, 0.8);
-                gl.vertex3f(0.1 + b, 0.1 + c, 0.8);
-                gl.end();
-                gl.begin(gl.LINE_LOOP);
-                gl.color4f(1.0, 1.0, 1.0, dead_transparency_line);
-                gl.vertex3f(0.1 + b, 0.1 + a, 0.4);
-                gl.vertex3f(0.1 + b, 0.1 + c, 0.8);
-                gl.vertex3f(0.1 + b, 0.1 + c, 0.8);
-                gl.end();
-
-                //Second Hidden Layer Plane 2
-                if (c < 0.47) {
-                    gl.pointSize(3.0);
-                    gl.begin(gl.POINTS);
-                    gl.vertex3f(0.1 + b, 0.1 + a, 0.42);
-                    gl.vertex3f(0.13 + b, 0.13 + c, 0.82);
-                    gl.vertex3f(0.13 + b, 0.13 + c, 0.82);
-                    gl.end();
-                    gl.begin(gl.LINE_LOOP);
-                    gl.color4f(1.0, 1.0, 1.0, dead_transparency_line);
-                    gl.vertex3f(0.1 + b, 0.1 + a, 0.0);
-                    gl.vertex3f(0.13 + b, 0.13 + c, 0.82);
-                    gl.vertex3f(0.13 + b, 0.13 + c, 0.82);
-                    gl.end();
-                }
-
-                //Output Layer
-                gl.pointSize(3.0);
-                gl.begin(gl.POINTS);
-                gl.color4f(1.0, 1.0, 1.0, 0.05);
-                gl.vertex3f(0.1 + b, 0.35, 1.2);
-                gl.vertex3f(0.1 + b, 0.35, 1.2);
-                gl.end();
-                gl.begin(gl.LINE_LOOP);
-                gl.color4f(1.0, 1.0, 1.0, dead_transparency_line);
-                gl.vertex3f(0.1 + b, 0.1 + c, 0.8);
-                gl.vertex3f(0.1 + a, 0.35, 1.2);
-                gl.vertex3f(0.1 + a, 0.35, 1.2);
-                gl.end();
-            }
-        }
-    }
-
-    if (flag) {
-        //Inut image '1'
-        gl.pointSize(15.0);
-        gl.begin(gl.POINTS);
-        gl.color4f(0.0, 0.0, 1.0, 1.0);
-        gl.vertex3f(0.3, 0.2, 0.0);
-        gl.vertex3f(0.3, 0.3, 0.0);
-        gl.vertex3f(0.3, 0.4, 0.0);
-        gl.vertex3f(0.3, 0.5, 0.0);
-        gl.vertex3f(0.3, 0.6, 0.0);
-        gl.vertex3f(0.4, 0.5, 0.0);
-        gl.vertex3f(0.2, 0.2, 0.0);
-        gl.vertex3f(0.3, 0.2, 0.0);
-        gl.vertex3f(0.4, 0.2, 0.0);
-        gl.end();
-
-        //Highlighting the active neurons
-        highlightLines(0.3, 0.2, 0.0, live_transparency_line);
-        highlightLines(0.3, 0.3, 0.0, live_transparency_line);
-        highlightLines(0.3, 0.4, 0.0, live_transparency_line);
-        highlightLines(0.3, 0.5, 0.0, live_transparency_line);
-        highlightLines(0.3, 0.6, 0.0, live_transparency_line);
-        highlightLines(0.4, 0.5, 0.0, live_transparency_line);
-        highlightLines(0.2, 0.2, 0.0, live_transparency_line);
-        highlightLines(0.3, 0.2, 0.0, live_transparency_line);
-        highlightLines(0.4, 0.2, 0.0, live_transparency_line);
-    }
+    drawNodes();
+    drawEdges();
 
     // Flushing the whole output
     gl.flush();
@@ -264,4 +131,8 @@ pub fn handleMouseMotion(x: i32, y: i32) void {
 
 pub fn handleMouseButton(button: MouseButton, action: MouseButtonAction) void {
     Camera.Controller.handleMouseButton(button, action);
+}
+
+pub fn toggleNeuralNetworkActivity() void {
+    show_activity_flag = !show_activity_flag;
 }

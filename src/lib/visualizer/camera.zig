@@ -1,4 +1,5 @@
 const std = @import("std");
+
 const zopengl = @import("zopengl");
 const gl = zopengl.bindings;
 
@@ -19,14 +20,14 @@ pub fn reshapeView(display_width: gl.Sizei, display_height: gl.Sizei) void {
 
     const w: gl.Double = @floatFromInt(display_width);
     const h: gl.Double = @floatFromInt(display_height);
-    _top    =  1.0;
+    _top = 1.0;
     _bottom = -1.0;
-    _left   = -w/h;
-    _right  = -_left;
+    _left = -w / h;
+    _right = -_left;
 
     gl.matrixMode(gl.PROJECTION); // Set a new projection matrix
     gl.loadIdentity();
-    gl.frustum(_left,_right,_bottom,_top,_zNear,_zFar);
+    gl.frustum(_left, _right, _bottom, _top, _zNear, _zFar);
 
     gl.matrixMode(gl.MODELVIEW);
 }
