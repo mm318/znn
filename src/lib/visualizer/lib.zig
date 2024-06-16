@@ -3,8 +3,12 @@ const std = @import("std");
 const zopengl = @import("zopengl");
 const gl = zopengl.bindings;
 
-const NeuralNetwork = @import("../lib.zig").NeuralNetwork;
 const Camera = @import("camera.zig");
+const Text = @import("text.zig");
+const NeuralNetwork = @import("../lib.zig").NeuralNetwork;
+const C = struct {
+    usingnamespace @import("color.zig");
+};
 
 var neural_network: ?NeuralNetwork = null;
 var show_activity_flag = false;
@@ -21,8 +25,9 @@ pub fn init(loader: zopengl.LoaderFn, display_width: gl.Sizei, display_height: g
     rng_impl = std.Random.DefaultPrng.init(@intCast(std.time.timestamp()));
     rng = rng_impl.random();
 
+    // gl.disable(gl.CULL_FACE);
     gl.polygonMode(gl.FRONT_AND_BACK, gl.LINE);
-    gl.clearColor(0.0, 0.0, 0.0, 0.0);
+    gl.clearColor(C.black.r, C.black.g, C.black.b, 0.0);
     gl.enable(gl.BLEND);
     gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
     Camera.initView(display_width, display_height);
@@ -44,7 +49,7 @@ fn nodePosition(neuron: NeuralNetwork.Neuron, grid_dim: usize) struct { gl.Float
 }
 
 fn drawNodes() void {
-    gl.color4f(1.0, 1.0, 1.0, 0.05);
+    gl.color4f(C.white.r, C.white.g, C.white.b, 0.05);
 
     for (0..neural_network.?.layers.len) |layer_id| {
         // std.log.debug("layer {} has {} neurons", .{layer_id, neural_network.?.layers[layer_id].len});
@@ -86,9 +91,9 @@ fn drawEdges() void {
 
                 gl.begin(gl.LINES);
                 if (show_activity_flag and rng.float(f32) < 0.05) {
-                    gl.color4f(1.0, 0.0, 0.0, live_line_transparency);
+                    gl.color4f(C.red.r, C.red.g, C.red.b, live_line_transparency);
                 } else {
-                    gl.color4f(1.0, 1.0, 1.0, dead_line_transparency);
+                    gl.color4f(C.white.r, C.white.g, C.white.b, dead_line_transparency);
                 }
                 gl.vertex3f(src_pos[0], src_pos[1], src_z);
                 gl.vertex3f(dst_pos[0], dst_pos[1], dst_z);
@@ -98,15 +103,31 @@ fn drawEdges() void {
     }
 }
 
-pub fn dislayNetwork(_: gl.Sizei, _: gl.Sizei) void {
-    // clear the drawing buffer.
-    gl.clear(gl.COLOR_BUFFER_BIT);
+fn drawHudInfo(display_width: gl.Sizei, display_height: gl.Sizei) void {
+    // clear the depth buffer.
+    // gl.clear(gl.DEPTH_BUFFER_BIT);
 
-    drawNodes();
-    drawEdges();
+    // enable 2d render mode
+    gl.matrixMode(gl.MODELVIEW);
+    gl.pushMatrix();
+    defer {
+        gl.matrixMode(gl.MODELVIEW);
+        gl.popMatrix();        
+    }
+    gl.loadIdentity();
 
-    // Flushing the whole output
-    gl.flush();
+    // continue enabling 2d render mode
+    gl.matrixMode(gl.PROJECTION);
+    gl.pushMatrix();
+    defer {
+        gl.matrixMode(gl.PROJECTION);
+        gl.popMatrix();
+    }
+    gl.loadIdentity();
+    gl.ortho(0.0, @floatFromInt(display_width), @floatFromInt(display_height), 0.0, -1.0, 10.0);
+
+    // render 2d stuff
+    Text.drawText("Press H for help", 10, 10, 6, 9, 2, C.white);
 }
 
 pub fn reshapeNetwork(display_width: gl.Sizei, display_height: gl.Sizei) void {
@@ -118,8 +139,31 @@ pub fn reshapeNetwork(display_width: gl.Sizei, display_height: gl.Sizei) void {
 }
 
 pub fn idleNetwork(display_width: gl.Sizei, display_height: gl.Sizei) void {
-    dislayNetwork(display_width, display_height);
     Camera.view();
+
+    // clear the drawing buffer.
+    gl.clear(gl.COLOR_BUFFER_BIT);
+
+    drawNodes();
+    drawEdges();
+
+    // DEBUG: Draw a red x-axis, a green y-axis, and a blue z-axis. Each of the axes are ten units long.
+    gl.begin(gl.LINES);
+    gl.color3f(C.red.r, C.red.g, C.red.b);
+    gl.vertex3f(0, 0, 0);
+    gl.vertex3f(10, 0, 0);
+    gl.color3f(C.green.r, C.green.g, C.green.b);
+    gl.vertex3f(0, 0, 0);
+    gl.vertex3f(0, 10, 0);
+    gl.color3f(C.blue.r, C.blue.g, C.blue.b);
+    gl.vertex3f(0, 0, 0);
+    gl.vertex3f(0, 0, 10);
+    gl.end();
+
+    drawHudInfo(display_width, display_height);
+
+    // Flushing the whole output
+    gl.flush();
 }
 
 pub const MouseButton = Camera.Controller.Button;

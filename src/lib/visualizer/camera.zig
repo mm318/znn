@@ -32,6 +32,21 @@ pub fn reshapeView(display_width: gl.Sizei, display_height: gl.Sizei) void {
     gl.matrixMode(gl.MODELVIEW);
 }
 
+pub const Utils = struct {
+    pub fn convertScreenXYtoWorldXYZ(x: gl.Int, y: gl.Int) struct { gl.Double, gl.Double, gl.Double } {
+        var viewport: [4]gl.Int = undefined;
+        gl.getIntegerv(gl.VIEWPORT, &viewport);
+
+        // Use the ortho projection and viewport information to map from mouse co-ordinates back into world co-ordinates
+        var px = @as(gl.Double, @floatFromInt(x - viewport[0])) / @as(gl.Double, @floatFromInt(viewport[2]));
+        var py = @as(gl.Double, @floatFromInt(y - viewport[1])) / @as(gl.Double, @floatFromInt(viewport[3]));
+        px = _left + px * (_right - _left);
+        py = _top + py * (_bottom - _top);
+
+        return .{ px, py, _zNear };
+    }
+};
+
 // based on glt zpr code
 pub const Controller = struct {
     var _mouseX: gl.Int = 0;
@@ -95,9 +110,7 @@ pub const Controller = struct {
             },
         }
 
-        var viewport: [4]gl.Int = undefined;
-        gl.getIntegerv(gl.VIEWPORT, &viewport);
-        pos(&_dragPosX, &_dragPosY, &_dragPosZ, _mouseX, _mouseY, viewport);
+        pos(&_dragPosX, &_dragPosY, &_dragPosZ, _mouseX, _mouseY);
     }
 
     pub fn handleMouseMotion(x: i32, y: i32) void {
@@ -107,13 +120,13 @@ pub const Controller = struct {
             return;
         }
 
-        var viewport: [4]gl.Int = undefined;
-        gl.getIntegerv(gl.VIEWPORT, &viewport);
-
         var changed = false;
         if (_mouseMiddle or (_mouseLeft and _mouseRight)) { // zoom
             zoom(dy);
         } else if (_mouseLeft) { // rotate
+            var viewport: [4]gl.Int = undefined;
+            gl.getIntegerv(gl.VIEWPORT, &viewport);
+
             const ax = @as(gl.Double, @floatFromInt(dy));
             const ay = @as(gl.Double, @floatFromInt(dx));
             const az = 0.0;
@@ -133,7 +146,7 @@ pub const Controller = struct {
             var px: gl.Double = undefined;
             var py: gl.Double = undefined;
             var pz: gl.Double = undefined;
-            pos(&px, &py, &pz, x, y, viewport);
+            pos(&px, &py, &pz, x, y);
 
             gl.loadIdentity();
             gl.translatef(@floatCast(px - _dragPosX), @floatCast(py - _dragPosY), @floatCast(pz - _dragPosZ));
@@ -171,17 +184,11 @@ pub const Controller = struct {
         return @sqrt((x * x) + (y * y) + (z * z));
     }
 
-    fn pos(px: *gl.Double, py: *gl.Double, pz: *gl.Double, x: gl.Int, y: gl.Int, viewport: [4]gl.Int) void {
-        // Use the ortho projection and viewport information
-        // to map from mouse co-ordinates back into world
-        // co-ordinates
-
-        px.* = @as(gl.Double, @floatFromInt(x - viewport[0])) / @as(gl.Double, @floatFromInt(viewport[2]));
-        py.* = @as(gl.Double, @floatFromInt(y - viewport[1])) / @as(gl.Double, @floatFromInt(viewport[3]));
-
-        px.* = _left + px.* * (_right - _left);
-        py.* = _top + py.* * (_bottom - _top);
-        pz.* = _zNear;
+    fn pos(px: *gl.Double, py: *gl.Double, pz: *gl.Double, x: gl.Int, y: gl.Int) void {
+        const coords = Utils.convertScreenXYtoWorldXYZ(x, y);
+        px.* = coords[0];
+        py.* = coords[1];
+        pz.* = coords[2];
     }
 
     fn getMatrix() void {

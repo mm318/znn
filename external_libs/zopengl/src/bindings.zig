@@ -1840,6 +1840,7 @@ pub var matrixMode: *const fn (mode: Enum) callconv(.C) void = undefined;
 pub var pushMatrix: *const fn () callconv(.C) void = undefined;
 pub var popMatrix: *const fn () callconv(.C) void = undefined;
 pub var multMatrixd: *const fn (m: [*c]const Double) callconv(.C) void = undefined;
+pub var ortho: *const fn (left: Double, right: Double, bottom: Double, top: Double, near_val: Double, far_val: Double) callconv(.C) void = undefined;
 pub var frustum: *const fn (left: Double, right: Double, bottom: Double, top: Double, near_val: Double, far_val: Double) callconv(.C) void = undefined;
 pub var rotatef: *const fn (angle: Float, x: Float, y: Float, z: Float) callconv(.C) void = undefined;
 pub var scalef: *const fn (x: Float, y: Float, z: Float) callconv(.C) void = undefined;

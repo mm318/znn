@@ -696,6 +696,7 @@ pub fn loadCompatProfileExt(loader: LoaderFn) !void {
     try load("glPushMatrix", .{&bindings.pushMatrix});
     try load("glPopMatrix", .{&bindings.popMatrix});
     try load("glMultMatrixd", .{&bindings.multMatrixd});
+    try load("glOrtho", .{&bindings.ortho});
     try load("glFrustum", .{&bindings.frustum});
     try load("glRotatef", .{&bindings.rotatef});
     try load("glScalef", .{&bindings.scalef});
