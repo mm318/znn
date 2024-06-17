@@ -1,8 +1,8 @@
 const std = @import("std");
 
 const SDL = @import("sdl2");
-const zopengl = @import("zopengl");
 
+const Mnist = @import("util/mnist.zig");
 const NeuralNetwork = @import("lib/lib.zig").NeuralNetwork;
 const Visualizer = @import("lib/lib.zig").Visualizer;
 
@@ -22,8 +22,8 @@ fn initialOrientiation(win_width: i32, win_height: i32) void {
     const x_initial = @divTrunc(win_width, 2);
     const y_initial = @divTrunc(win_height, 2);
 
-    const trans_x_displacement = -250;
-    const trans_y_displacement = -100;
+    const trans_x_displacement = -400;
+    const trans_y_displacement = -70;
     const trans_x_final = x_initial + trans_x_displacement;
     const trans_y_final = y_initial + trans_y_displacement;
     Visualizer.handleMouseButton(.right, .{ .click = .{ .x = x_initial, .y = y_initial } });
@@ -41,6 +41,12 @@ fn initialOrientiation(win_width: i32, win_height: i32) void {
     Visualizer.handleMouseButton(.left, .{ .click = .{ .x = x_initial, .y = y_initial } });
     Visualizer.handleMouseMotion(x_initial, rot_y_final);
     Visualizer.handleMouseButton(.left, .{ .release = .{ .x = x_initial, .y = rot_y_final } });
+
+    const zoom_y_displacement = -80;
+    const zoom_y_final = y_initial + zoom_y_displacement;
+    Visualizer.handleMouseButton(.middle, .{ .click = .{ .x = x_initial, .y = y_initial } });
+    Visualizer.handleMouseMotion(x_initial, zoom_y_final);
+    Visualizer.handleMouseButton(.middle, .{ .release = .{ .x = x_initial, .y = zoom_y_final } });
 }
 
 fn display(neural_network: NeuralNetwork) !void {
@@ -141,7 +147,25 @@ fn display(neural_network: NeuralNetwork) !void {
 }
 
 pub fn main() !void {
-    const nn = NeuralNetwork.new(4, &.{ 81, 150, 150, 9 });
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer std.debug.assert(gpa.deinit() == .ok);
+    const allocator = gpa.allocator();
+
+    const args = try std.process.argsAlloc(allocator);
+    defer std.process.argsFree(allocator, args);
+    if (args.len < 2) {
+        std.log.err("Missing argument: Images filename!", .{});
+        std.process.exit(1);
+    }
+    const images_filename = args[1];
+
+    const images = Mnist.load_images(allocator, images_filename);
+    defer images.deinit();
+
+    const nn = NeuralNetwork.new(allocator, 4, &.{ 784, 1000, 1000, 9 }, 0);
+    defer allocator.destroy(nn);
+    nn.setInput(images.list.items[0], .{ .rows = images.image_dims.rows, .cols = images.image_dims.cols });
+
     const vis_thread = try std.Thread.spawn(.{}, display, .{nn.interface});
     vis_thread.join();
 }

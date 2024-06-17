@@ -27,7 +27,7 @@ pub fn reshapeView(display_width: gl.Sizei, display_height: gl.Sizei) void {
 
     gl.matrixMode(gl.PROJECTION); // Set a new projection matrix
     gl.loadIdentity();
-    gl.frustum(_left, _right, _bottom, _top, _zNear, _zFar);
+    gl.ortho(_left, _right, _bottom, _top, _zNear, _zFar);
 
     gl.matrixMode(gl.MODELVIEW);
 }
