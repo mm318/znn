@@ -9,6 +9,8 @@ const Visualizer = @import("lib/lib.zig").Visualizer;
 const DEFAULT_WIN_WIDTH = 1280;
 const DEFAULT_WIN_HEIGHT = 960;
 
+var stop = std.atomic.Value(bool).init(false);
+
 fn sdlPanic() noreturn {
     const str = @as(?[*:0]const u8, SDL.SDL_GetError()) orelse "unknown error";
     @panic(std.mem.sliceTo(str, 0));
@@ -49,7 +51,7 @@ fn initialOrientiation(win_width: i32, win_height: i32) void {
     Visualizer.handleMouseButton(.middle, .{ .release = .{ .x = x_initial, .y = zoom_y_final } });
 }
 
-fn display(neural_network: NeuralNetwork) !void {
+fn display(neural_network: *const NeuralNetwork) !void {
     if (SDL.SDL_Init(SDL.SDL_INIT_VIDEO | SDL.SDL_INIT_EVENTS | SDL.SDL_INIT_AUDIO) < 0) {
         sdlPanic();
     }
@@ -129,6 +131,7 @@ fn display(neural_network: NeuralNetwork) !void {
                             Visualizer.toggleNeuralNetworkActivity();
                         },
                         SDL.SDL_SCANCODE_ESCAPE => {
+                            stop.store(true, .monotonic);
                             break :mainLoop;
                         },
                         else => {
@@ -164,8 +167,17 @@ pub fn main() !void {
 
     const nn = NeuralNetwork.new(allocator, 4, &.{ 784, 1000, 1000, 9 }, 0);
     defer allocator.destroy(nn);
-    nn.setInput(images.list.items[0], .{ .rows = images.image_dims.rows, .cols = images.image_dims.cols });
+    nn.setInputs(images.list.items[0], .{ .rows = images.image_dims.rows, .cols = images.image_dims.cols });
 
-    const vis_thread = try std.Thread.spawn(.{}, display, .{nn.interface});
-    vis_thread.join();
+    const vis_thread = try std.Thread.spawn(.{}, display, .{&nn.interface});
+    defer vis_thread.join();
+
+    for (0..100) |i| {
+        nn.timestep(false);
+        std.log.info("at timestep {}", .{i});
+        std.time.sleep(1 * std.time.ns_per_s);
+        if (stop.load(.monotonic)) {
+            break;
+        }
+    }
 }

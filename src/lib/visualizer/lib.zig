@@ -10,20 +10,16 @@ const C = struct {
     usingnamespace @import("color.zig");
 };
 
-var rng_impl: std.Random.DefaultPrng = undefined;
-var rng: std.Random = undefined;
-var neural_network: NeuralNetwork = undefined;
+var neural_network: *const NeuralNetwork = undefined;
 var show_activity_flag = false;
 
-pub fn init(loader: zopengl.LoaderFn, display_width: gl.Sizei, display_height: gl.Sizei, nn: NeuralNetwork) void {
+pub fn init(loader: zopengl.LoaderFn, display_width: gl.Sizei, display_height: gl.Sizei, nn: *const NeuralNetwork) void {
     zopengl.loadCompatProfileExt(loader) catch |err| {
         std.log.err("{}", .{err});
         @panic("error loading opengl functions");
     };
 
     neural_network = nn;
-    rng_impl = std.Random.DefaultPrng.init(@intCast(std.time.timestamp()));
-    rng = rng_impl.random();
 
     // gl.disable(gl.CULL_FACE);
     gl.polygonMode(gl.FRONT_AND_BACK, gl.LINE);
@@ -36,8 +32,8 @@ pub fn init(loader: zopengl.LoaderFn, display_width: gl.Sizei, display_height: g
 const x_spacing: gl.Float = 0.1;
 const y_spacing: gl.Float = 0.1;
 const z_spacing: gl.Float = 1.6;
-const dead_line_transparency = 0.02;
-const live_line_transparency = 0.15;
+const dead_line_transparency = 0.01;
+const live_line_transparency = 0.05;
 
 fn nodePosition(neuron: NeuralNetwork.NeuronInfo, grid_dim: usize) struct { gl.Float, gl.Float } {
     const x_offset: gl.Float = @as(gl.Float, @floatFromInt(grid_dim - 1)) * x_spacing / 2;
@@ -67,8 +63,9 @@ fn drawNodes() void {
             std.debug.assert(neuron.id.layer == layer_id);
             std.debug.assert(neuron.id.neuron == neuron_id);
 
-            if (neuron.active) {
-                gl.color4f(C.blue.r, C.blue.g, C.blue.b, 1.0);
+            const neuron_state = neuron.internal_state.load(.monotonic);
+            if (neuron_state > 0) {
+                gl.color4f(C.blue.r, C.blue.g, C.blue.b, neuron_state);
             } else {
                 gl.color4f(C.gray.r, C.gray.g, C.gray.b, 0.15);
             }
@@ -81,6 +78,10 @@ fn drawNodes() void {
 }
 
 fn drawEdges() void {
+    if (!show_activity_flag) {
+        return;
+    }
+
     for (1..neural_network.layers.len) |dst_layer_id| {
         const src_layer_id = dst_layer_id - 1;
         const src_z = @as(gl.Float, @floatFromInt(src_layer_id)) * z_spacing;
@@ -94,15 +95,13 @@ fn drawEdges() void {
                 const dst_neuron = neural_network.layers[dst_layer_id][dst_neuron_id];
                 const dst_pos = nodePosition(dst_neuron, dst_layer_grid_dim);
 
-                gl.begin(gl.LINES);
-                if (show_activity_flag and rng.float(f32) < 0.02) {
-                    gl.color4f(C.red.r, C.red.g, C.red.b, live_line_transparency);
+                if (dst_neuron.input_states[src_neuron_id].load(.monotonic) == .FIRING) {
+                    gl.begin(gl.LINES);
+                    gl.color4f(C.white.r, C.white.g, C.white.b, live_line_transparency);
                     gl.vertex3f(src_pos[0], src_pos[1], src_z);
                     gl.vertex3f(dst_pos[0], dst_pos[1], dst_z);
-                } else {
-                    // gl.color4f(C.white.r, C.white.g, C.white.b, dead_line_transparency);
+                    gl.end();
                 }
-                gl.end();
             }
         }
     }
@@ -132,7 +131,13 @@ fn drawHudInfo(display_width: gl.Sizei, display_height: gl.Sizei) void {
     gl.ortho(0.0, @floatFromInt(display_width), @floatFromInt(display_height), 0.0, -1.0, 10.0);
 
     // render 2d stuff
-    Text.drawText("Press H for help", 10, 10, 6, 9, 2, C.white);
+    var charbuf: [1024]u8 = undefined;
+    const info_str = std.fmt.bufPrint(&charbuf,
+        \\Timestep: {}
+        \\
+        \\Press H for help
+    , .{neural_network.timestep.load(.monotonic)}) catch @panic("buffer overflow");
+    Text.drawText(info_str, 10, 10, 6, 9, 2, C.white);
 }
 
 pub fn reshapeNetwork(display_width: gl.Sizei, display_height: gl.Sizei) void {
