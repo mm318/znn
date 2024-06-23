@@ -7,6 +7,8 @@ const FIRE_THRESHOLD = 0.99;
 const ConnectionState = enum(u8) {
     AT_REST,
     FIRING,
+    WEAKENING,
+    STRENGTHENING,
     // FIRED_1_STEPS_AGO,
     // FIRED_2_STEPS_AGO,
     // FIRED_3_STEPS_AGO,
@@ -15,7 +17,7 @@ const ConnectionState = enum(u8) {
 pub const NeuronInfo = struct {
     id: struct { layer: usize, neuron: usize },
     coords: struct { x: usize, y: usize },
-    internal_state: std.atomic.Value(f32), // keep in sync with LayerType
+    internal_state: std.atomic.Value(f32), // keep in sync with LayerType. negative means fixed output
     input_states: []std.atomic.Value(ConnectionState), // keep in sync with LayerType
 
     fn init(self: *NeuronInfo, layer_id: usize, neuron_id: usize, input_states: []std.atomic.Value(ConnectionState)) void {
@@ -148,6 +150,12 @@ fn NeuralNetworkType(comptime num_layers: usize, comptime num_neurons: []const u
             }
         }
 
+        pub fn setOutputs(self: *Self, label: usize) void {
+            // std.log.debug("label = {}", .{label});
+            std.debug.assert(label < num_neurons[num_layers - 1]);
+            self.setState(num_layers - 1, label, -1.0);
+        }
+
         fn NeuralNetworkTemporaryType() type {
             std.debug.assert(num_neurons.len == num_layers);
 
@@ -218,43 +226,85 @@ fn NeuralNetworkType(comptime num_layers: usize, comptime num_neurons: []const u
             inline for (1..num_layers) |layer_id| {
                 const layer_field_name = std.fmt.comptimePrint("layer{}", .{layer_id});
                 const layer = &@field(self.internals, layer_field_name);
-                const layer_deltas = &@field(state_deltas, layer_field_name);
+                // const layer_deltas = &@field(state_deltas, layer_field_name);
                 const layer_new_state = &@field(new_states, layer_field_name);
 
                 const FIRE_THRESHOLD_VEC: @TypeOf(layer.internal_states) = @splat(FIRE_THRESHOLD);
                 const MIN_STATE_VEC: @TypeOf(layer.internal_states) = @splat(0);
                 const LEAK_RATE_VEC: @TypeOf(layer.internal_states) = @splat(LEAK_RATE);
 
-                const fired = layer.internal_states >= FIRE_THRESHOLD_VEC;
-                layer_new_state.* = @select(f32, fired, MIN_STATE_VEC, layer.internal_states - LEAK_RATE_VEC);
-                layer_new_state.* = @max(layer_new_state.* + layer_deltas.*, MIN_STATE_VEC);
+                layer_new_state.* = @abs(layer.internal_states);
+                const fired = layer_new_state.* >= FIRE_THRESHOLD_VEC;
+                layer_new_state.* = @select(f32, fired, MIN_STATE_VEC, layer_new_state.* - LEAK_RATE_VEC);
+                // layer_new_state.* = @max(layer_new_state.* + layer_deltas.*, MIN_STATE_VEC);
             }
 
             // optional: learn (adjust weights)
             if (learn) {
+                // perform hebbian learning or spike-timing dependent plasticity
                 // compare layer.internal_states and layer_new_state
+                inline for (1..num_layers) |dst_layer_id| {
+                    const src_layer_id = dst_layer_id - 1;
+                    const src_layer_field_name = std.fmt.comptimePrint("layer{}", .{src_layer_id});
+                    const src_layer_state = &@field(self.internals, src_layer_field_name).internal_states;
+                    const src_layer_new_state = if (src_layer_id == 0) src_layer_state else &@field(new_states, src_layer_field_name);
+                    const dst_layer_field_name = std.fmt.comptimePrint("layer{}", .{dst_layer_id});
+                    const dst_layer = &@field(self.internals, dst_layer_field_name);
+                    const dst_layer_new_state = &@field(new_states, dst_layer_field_name);
+
+                    const past_presynapse = src_layer_state.* >= @as(@TypeOf(src_layer_state.*), @splat(FIRE_THRESHOLD));
+                    const curr_presynapse = src_layer_new_state.* >= @as(@TypeOf(src_layer_new_state.*), @splat(FIRE_THRESHOLD));
+                    // const past_postsynapse = @abs(dst_layer.internal_state) >= @as(@TypeOf(dst_layer.internal_state), @splat(FIRE_THRESHOLD));
+                    const curr_postsynapse = dst_layer_new_state.* >= @as(@TypeOf(dst_layer_new_state.*), @splat(FIRE_THRESHOLD));
+
+                    for (0..num_neurons[dst_layer_id]) |dst_neuron_id| {
+                        for (0..num_neurons[src_layer_id]) |src_neuron_id| {
+                            if (past_presynapse[src_neuron_id] and curr_postsynapse[dst_neuron_id]) {
+                                dst_layer.input_states[dst_neuron_id][src_neuron_id].store(.STRENGTHENING, .monotonic);
+                                dst_layer.input_weights[dst_neuron_id][src_neuron_id] *= 2;
+                            } else if (past_presynapse[src_neuron_id] and !curr_postsynapse[dst_neuron_id]) {
+                                dst_layer.input_states[dst_neuron_id][src_neuron_id].store(.WEAKENING, .monotonic);
+                                dst_layer.input_weights[dst_neuron_id][src_neuron_id] /= 2;
+                                // } else if (!past_presynapse[src_neuron_id] and curr_postsynapse[dst_neuron_id]) {
+                                //     dst_layer.input_states[dst_neuron_id][src_neuron_id].store(.WEAKENING, .monotonic);
+                            } else if (curr_presynapse[src_neuron_id]) {
+                                dst_layer.input_states[dst_neuron_id][src_neuron_id].store(.FIRING, .monotonic);
+                            } else {
+                                dst_layer.input_states[dst_neuron_id][src_neuron_id].store(.AT_REST, .monotonic);
+                            }
+                        }
+                    }
+                }
             }
             inline for (1..num_layers) |layer_id| {
                 const layer_field_name = std.fmt.comptimePrint("layer{}", .{layer_id});
                 const layer = &@field(self.internals, layer_field_name);
                 const layer_new_state = &@field(new_states, layer_field_name);
-                layer.internal_states = layer_new_state.*;
+
+                if (!learn or layer_id < num_layers - 1) {
+                    layer.internal_states = layer_new_state.*;
+                }
             }
 
             // fire (update connection states)
             inline for (1..num_layers) |dst_layer_id| {
-                const src_layer_id = dst_layer_id - 1;
-                const src_layer_field_name = std.fmt.comptimePrint("layer{}", .{src_layer_id});
-                const src_layer = &@field(self.internals, src_layer_field_name);
                 const dst_layer_field_name = std.fmt.comptimePrint("layer{}", .{dst_layer_id});
                 const dst_layer = &@field(self.internals, dst_layer_field_name);
+
                 for (0..num_neurons[dst_layer_id]) |dst_neuron_id| {
                     dst_layer.neurons[dst_neuron_id].internal_state.store(dst_layer.internal_states[dst_neuron_id], .monotonic);
-                    for (0..num_neurons[src_layer_id]) |src_neuron_id| {
-                        if (src_layer.internal_states[src_neuron_id] >= FIRE_THRESHOLD) {
-                            dst_layer.input_states[dst_neuron_id][src_neuron_id].store(.FIRING, .monotonic);
-                        } else {
-                            dst_layer.input_states[dst_neuron_id][src_neuron_id].store(.AT_REST, .monotonic);
+
+                    if (!learn) {
+                        const src_layer_id = dst_layer_id - 1;
+                        const src_layer_field_name = std.fmt.comptimePrint("layer{}", .{src_layer_id});
+                        const src_layer = &@field(self.internals, src_layer_field_name);
+
+                        for (0..num_neurons[src_layer_id]) |src_neuron_id| {
+                            if (src_layer.internal_states[src_neuron_id] >= FIRE_THRESHOLD) {
+                                dst_layer.input_states[dst_neuron_id][src_neuron_id].store(.FIRING, .monotonic);
+                            } else {
+                                dst_layer.input_states[dst_neuron_id][src_neuron_id].store(.AT_REST, .monotonic);
+                            }
                         }
                     }
                 }

@@ -27,6 +27,7 @@ pub fn init(loader: zopengl.LoaderFn, display_width: gl.Sizei, display_height: g
     gl.enable(gl.BLEND);
     gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
     Camera.initView(display_width, display_height);
+    Camera.Controller.setReferencePoint(0, 0, @as(gl.Float, @floatFromInt(neural_network.layers.len - 1)) * z_spacing / 2);
 }
 
 const x_spacing: gl.Float = 0.1;
@@ -64,10 +65,12 @@ fn drawNodes() void {
             std.debug.assert(neuron.id.neuron == neuron_id);
 
             const neuron_state = neuron.internal_state.load(.monotonic);
-            if (neuron_state > 0) {
+            if (neuron_state < 0) {
+                gl.color4f(C.green.r, C.green.g, C.green.b, 1.0);
+            } else if (neuron_state > 0) {
                 gl.color4f(C.blue.r, C.blue.g, C.blue.b, neuron_state);
             } else {
-                gl.color4f(C.gray.r, C.gray.g, C.gray.b, 0.15);
+                gl.color4f(C.gray.r, C.gray.g, C.gray.b, 0.5);
             }
 
             const pos = nodePosition(neuron, layer_grid_dim);
@@ -93,15 +96,26 @@ fn drawEdges() void {
             const src_pos = nodePosition(src_neuron, src_layer_grid_dim);
             for (0..neural_network.layers[dst_layer_id].len) |dst_neuron_id| {
                 const dst_neuron = neural_network.layers[dst_layer_id][dst_neuron_id];
-                const dst_pos = nodePosition(dst_neuron, dst_layer_grid_dim);
+                const connection_state = dst_neuron.input_states[src_neuron_id].load(.monotonic);
+                const line_color = switch (connection_state) {
+                    .AT_REST => C.gray,
+                    .FIRING => C.white,
+                    .WEAKENING => C.red,
+                    .STRENGTHENING => C.green,
+                };
+                const line_transparency: gl.Float = switch (connection_state) {
+                    .FIRING => live_line_transparency,
+                    else => dead_line_transparency,
+                };
 
-                if (dst_neuron.input_states[src_neuron_id].load(.monotonic) == .FIRING) {
+                // if (connection_state != .AT_REST) {
+                    const dst_pos = nodePosition(dst_neuron, dst_layer_grid_dim);
                     gl.begin(gl.LINES);
-                    gl.color4f(C.white.r, C.white.g, C.white.b, live_line_transparency);
+                    gl.color4f(line_color.r, line_color.g, line_color.b, line_transparency);
                     gl.vertex3f(src_pos[0], src_pos[1], src_z);
                     gl.vertex3f(dst_pos[0], dst_pos[1], dst_z);
                     gl.end();
-                }
+                // }
             }
         }
     }
