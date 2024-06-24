@@ -1,0 +1,64 @@
+GENERAL BRAIN BIG PICTURE:
+
+neuron (grid cell) firing frequency plotted in phase space forms a manifold
+  - after principal component analysis, manifold was found to be the surface of a torus
+  - continuous attractor network
+brain is critical point or phase transition point, a neuron on average triggers one other neuron
+  - branching ratio (sum of probability of downstream neurons firing should be 1)
+overall beat frequency of the neurons (brain waves)
+  - theta 4-12 Hz (saving memory)
+  - alpha 8-12 Hz
+  - delta 1-3 Hz
+  - gamma 30-80 Hz
+neurons fire from 1 hz (most common) to 10 hz (least common), the rate is logarithmically distributed
+  - fast firing is theorized to be generalized knowledge and slow firing is theorized to be specialized knowledge
+
+
+ARTIFICIAL IMPLEMENTATIONS OF ASSOCIATIVE MEMORY:
+
+- hopfield network
+- boltzmann machines
+- dense associative memory
+
+
+ARTIFICIAL IMPLEMENTATIONS OF PREDICTORS:
+- tolman-eichenbaum machine (based on hippocampus)
+  - graph of knowledge
+  - latent space
+  - if using softmax, it is mathematically equivalent to tranformers
+- hierarchical temporal memory (based on neocortex and pyramidal neurons)
+
+
+NEURON HIGH-LEVEL GROUP (REGION) STRUCTURE:
+
+hierarchy of cortical columns (high detail & narrow field of view vs low detail & wide field of view)
+  - similar to what convolutional neuron network tries to do?
+cortical columns (or hypercolumns) have about 50 to 100 minicolumns
+minicolumns have about 80 to 140 neurons
+minicolumns have layers
+  - pyramidal neuron (L2/L3)
+    feature (pooling)
+  - stellate neuron (L4)
+    sensation at orientation (seq mem)
+  - regular spiking neuron (L5a)
+    object (pooling)
+  - intrinsically bursting neuron (L5b)
+    feature at location (seq mem)
+  - corticothalmic neuron (L6a)
+    orientation (motor updated, like head direction cell)
+  - corticocortical neuron (L6)
+    location (motor updated, like grid cell)
+layers communicate with each other using sparse distributed representation
+
+
+NEURON LOW-LEVEL DETAILS:
+
+neurons have proximal, distal, and apical inputs, determines whether neuron is active or predictive
+  - proximal is feedforward, drive input
+  - distal is modulatory input, affect how to respond to proximal
+  - apical?
+  - basal?
+each neuron is like a deep neural network
+  - temporal order of stimulation along the dendrite impacts resulting input to neuron soma
+  - linearly non-separable activation function (xor-like)
+    - there is an upper limit to the input that triggers an output

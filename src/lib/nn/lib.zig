@@ -93,7 +93,7 @@ fn NeuralNetworkType(comptime num_layers: usize, comptime num_neurons: []const u
         interface: NeuralNetwork,
 
         pub fn init(nn: *Self, seed: u64) void {
-            const deamplification = 0.005;
+            const deamplification = 0.05;
             nn.rng_impl = std.Random.DefaultPrng.init(seed);
             nn.rng = nn.rng_impl.random();
 
@@ -153,7 +153,7 @@ fn NeuralNetworkType(comptime num_layers: usize, comptime num_neurons: []const u
         pub fn setOutputs(self: *Self, label: usize) void {
             // std.log.debug("label = {}", .{label});
             std.debug.assert(label < num_neurons[num_layers - 1]);
-            self.setState(num_layers - 1, label, -1.0);
+            self.setState(num_layers - 1, label, -FIRE_THRESHOLD);
         }
 
         fn NeuralNetworkTemporaryType() type {
@@ -202,6 +202,8 @@ fn NeuralNetworkType(comptime num_layers: usize, comptime num_neurons: []const u
         }
 
         pub fn timestep(self: *Self, learn: bool) void {
+            const relaxation_period = true;
+
             // sum up inputs
             var state_deltas: NeuralNetworkTemporaryType() = undefined;
             inline for (1..num_layers) |dst_layer_id| {
@@ -213,10 +215,12 @@ fn NeuralNetworkType(comptime num_layers: usize, comptime num_neurons: []const u
                 const dst_layer_deltas = &@field(state_deltas, dst_layer_field_name);
 
                 const FIRE_THRESHOLD_VEC: @TypeOf(src_layer.internal_states) = @splat(FIRE_THRESHOLD);
-                const MAX_SIGNAL_VEC: @TypeOf(src_layer.internal_states) = @splat(1);
+                const SIGNAL_VEC: @TypeOf(src_layer.internal_states) = @splat(1);
+                const NO_SIGNAL_VEC: @TypeOf(src_layer.internal_states) = @splat(0);
 
                 for (0..num_neurons[dst_layer_id]) |dst_neuron_id| {
-                    const signal = @min(@floor(src_layer.internal_states + FIRE_THRESHOLD_VEC), MAX_SIGNAL_VEC);
+                    const fired = src_layer.internal_states >= FIRE_THRESHOLD_VEC;
+                    const signal = @select(f32, fired, SIGNAL_VEC, NO_SIGNAL_VEC);
                     dst_layer_deltas[dst_neuron_id] += @reduce(.Add, dst_layer.input_weights[dst_neuron_id] * signal);
                 }
             }
@@ -226,7 +230,7 @@ fn NeuralNetworkType(comptime num_layers: usize, comptime num_neurons: []const u
             inline for (1..num_layers) |layer_id| {
                 const layer_field_name = std.fmt.comptimePrint("layer{}", .{layer_id});
                 const layer = &@field(self.internals, layer_field_name);
-                // const layer_deltas = &@field(state_deltas, layer_field_name);
+                const layer_deltas = &@field(state_deltas, layer_field_name);
                 const layer_new_state = &@field(new_states, layer_field_name);
 
                 const FIRE_THRESHOLD_VEC: @TypeOf(layer.internal_states) = @splat(FIRE_THRESHOLD);
@@ -235,8 +239,13 @@ fn NeuralNetworkType(comptime num_layers: usize, comptime num_neurons: []const u
 
                 layer_new_state.* = @abs(layer.internal_states);
                 const fired = layer_new_state.* >= FIRE_THRESHOLD_VEC;
-                layer_new_state.* = @select(f32, fired, MIN_STATE_VEC, layer_new_state.* - LEAK_RATE_VEC);
-                // layer_new_state.* = @max(layer_new_state.* + layer_deltas.*, MIN_STATE_VEC);
+                if (relaxation_period) {
+                    layer_new_state.* = @select(f32, fired, MIN_STATE_VEC, layer_new_state.* - LEAK_RATE_VEC + layer_deltas.*);
+                } else {
+                    layer_new_state.* = @select(f32, fired, MIN_STATE_VEC, layer_new_state.* - LEAK_RATE_VEC);
+                    layer_new_state.* += layer_deltas.*;
+                }
+                layer_new_state.* = @max(layer_new_state.*, MIN_STATE_VEC);
             }
 
             // optional: learn (adjust weights)
@@ -261,10 +270,10 @@ fn NeuralNetworkType(comptime num_layers: usize, comptime num_neurons: []const u
                         for (0..num_neurons[src_layer_id]) |src_neuron_id| {
                             if (past_presynapse[src_neuron_id] and curr_postsynapse[dst_neuron_id]) {
                                 dst_layer.input_states[dst_neuron_id][src_neuron_id].store(.STRENGTHENING, .monotonic);
-                                dst_layer.input_weights[dst_neuron_id][src_neuron_id] *= 2;
+                                // dst_layer.input_weights[dst_neuron_id][src_neuron_id] *= 2;
                             } else if (past_presynapse[src_neuron_id] and !curr_postsynapse[dst_neuron_id]) {
                                 dst_layer.input_states[dst_neuron_id][src_neuron_id].store(.WEAKENING, .monotonic);
-                                dst_layer.input_weights[dst_neuron_id][src_neuron_id] /= 2;
+                                // dst_layer.input_weights[dst_neuron_id][src_neuron_id] /= 2;
                                 // } else if (!past_presynapse[src_neuron_id] and curr_postsynapse[dst_neuron_id]) {
                                 //     dst_layer.input_states[dst_neuron_id][src_neuron_id].store(.WEAKENING, .monotonic);
                             } else if (curr_presynapse[src_neuron_id]) {

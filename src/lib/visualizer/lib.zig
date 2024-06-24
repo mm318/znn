@@ -68,9 +68,9 @@ fn drawNodes() void {
             if (neuron_state < 0) {
                 gl.color4f(C.green.r, C.green.g, C.green.b, 1.0);
             } else if (neuron_state > 0) {
-                gl.color4f(C.blue.r, C.blue.g, C.blue.b, neuron_state);
+                gl.color4f(C.blue.r, C.blue.g, C.blue.b, @max(neuron_state, 0.3));
             } else {
-                gl.color4f(C.gray.r, C.gray.g, C.gray.b, 0.5);
+                gl.color4f(C.gray.r, C.gray.g, C.gray.b, 0.3);
             }
 
             const pos = nodePosition(neuron, layer_grid_dim);
@@ -108,14 +108,14 @@ fn drawEdges() void {
                     else => dead_line_transparency,
                 };
 
-                // if (connection_state != .AT_REST) {
+                if (connection_state != .AT_REST) {
                     const dst_pos = nodePosition(dst_neuron, dst_layer_grid_dim);
                     gl.begin(gl.LINES);
                     gl.color4f(line_color.r, line_color.g, line_color.b, line_transparency);
                     gl.vertex3f(src_pos[0], src_pos[1], src_z);
                     gl.vertex3f(dst_pos[0], dst_pos[1], dst_z);
                     gl.end();
-                // }
+                }
             }
         }
     }
