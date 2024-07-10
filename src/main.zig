@@ -9,7 +9,10 @@ const Visualizer = @import("lib/lib.zig").Visualizer;
 const DEFAULT_WIN_WIDTH = 1280;
 const DEFAULT_WIN_HEIGHT = 960;
 
+var pause = std.atomic.Value(bool).init(false);
 var stop = std.atomic.Value(bool).init(false);
+var wait_lock = std.Thread.Mutex{};
+var signal = std.Thread.Condition{};
 
 fn sdlPanic() noreturn {
     const str = @as(?[*:0]const u8, SDL.SDL_GetError()) orelse "unknown error";
@@ -130,8 +133,17 @@ fn display(neural_network: *const NeuralNetwork) !void {
                         SDL.SDL_SCANCODE_1 => {
                             Visualizer.toggleNeuralNetworkActivity();
                         },
+                        SDL.SDL_SCANCODE_D => {
+                            Visualizer.dev_draw_flag = !Visualizer.dev_draw_flag;
+                        },
+                        SDL.SDL_SCANCODE_SPACE => {
+                            pause.store(!pause.load(.monotonic), .monotonic);
+                            signal.broadcast();
+                        },
                         SDL.SDL_SCANCODE_ESCAPE => {
                             stop.store(true, .monotonic);
+                            pause.store(false, .monotonic);
+                            signal.broadcast();
                             break :mainLoop;
                         },
                         else => {
@@ -186,10 +198,16 @@ pub fn main() !void {
     if (learn) {
         nn.setOutputs(labels.list[0]);
     }
+
+    wait_lock.lock();
+    defer wait_lock.unlock();
     for (0..100) |i| {
         nn.timestep(learn);
         std.log.info("at timestep {}", .{i});
         std.time.sleep(1 * std.time.ns_per_s);
+        while (pause.load(.monotonic)) {
+            signal.wait(&wait_lock);
+        }
         if (stop.load(.monotonic)) {
             break;
         }

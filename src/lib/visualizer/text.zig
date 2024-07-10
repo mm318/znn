@@ -77,18 +77,27 @@ fn drawGlyph(digit: u8, x: gl.Float, y: gl.Float, w: gl.Float, h: gl.Float) void
     }
 }
 
-pub fn drawText(text: []const u8, x: gl.Float, y: gl.Float, w: gl.Float, h: gl.Float, s: gl.Float, c: Color) void {
-    gl.color4f(c.r, c.g, c.b, 1.0);
+pub fn drawText(
+    text: []const u8,
+    x: gl.Float,
+    y: gl.Float,
+    char_width: gl.Float,
+    char_height: gl.Float,
+    vertical_spacing: gl.Float,
+    horizontal_spacing: gl.Float,
+    color: Color,
+) void {
+    gl.color4f(color.r, color.g, color.b, 1.0);
     var xx = x;
     var yy = y;
     gl.begin(gl.LINES);
     for (text) |char| {
         if (char == '\n') {
-            yy += h + s;
+            yy += char_height + vertical_spacing;
             xx = x;
         } else {
-            drawGlyph(char, xx, yy, w, h);
-            xx += w + s;
+            drawGlyph(char, xx, yy, char_width, char_height);
+            xx += char_width + horizontal_spacing;
         }
     }
     gl.end();

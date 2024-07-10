@@ -2,8 +2,13 @@ const std = @import("std");
 
 const DiagIdx = @import("../../util/diag_idx_to_coords.zig");
 
+const INPUT_AMPLIFICATION = 1.2;
+const MAX_INITIAL_WEIGHT = 0.05;
+
+pub const FIRE_THRESHOLD = 0.99;
 const LEAK_RATE = 0.3; // linear decay per timestep (TODO: make mock exponential)
-const FIRE_THRESHOLD = 0.99;
+const LEARN_RATE = 0.001; // the eta constant in hebbian learning formula
+
 const ConnectionState = enum(u8) {
     AT_REST,
     FIRING,
@@ -17,8 +22,8 @@ const ConnectionState = enum(u8) {
 pub const NeuronInfo = struct {
     id: struct { layer: usize, neuron: usize },
     coords: struct { x: usize, y: usize },
-    internal_state: std.atomic.Value(f32), // keep in sync with LayerType. negative means fixed output
-    input_states: []std.atomic.Value(ConnectionState), // keep in sync with LayerType
+    internal_state: std.atomic.Value(f32), // keep in sync with LayerType.internal_states[neuron_id]. negative means fixed output
+    input_states: []std.atomic.Value(ConnectionState),
 
     fn init(self: *NeuronInfo, layer_id: usize, neuron_id: usize, input_states: []std.atomic.Value(ConnectionState)) void {
         self.id.layer = layer_id;
@@ -43,7 +48,7 @@ fn LayerType(comptime num_input_neurons: usize, comptime num_neurons: usize) typ
         neurons: [num_neurons]NeuronInfo,
         internal_states: @Vector(num_neurons, f32), // keep in sync with NeuronInfo.internal_state
         input_weights: [num_neurons]@Vector(num_input_neurons, f32),
-        input_states: [num_neurons][num_input_neurons]std.atomic.Value(ConnectionState), // keep in sync with NeuronInfo.input_states
+        input_states: [num_neurons][num_input_neurons]std.atomic.Value(ConnectionState),
     };
 }
 
@@ -93,7 +98,6 @@ fn NeuralNetworkType(comptime num_layers: usize, comptime num_neurons: []const u
         interface: NeuralNetwork,
 
         pub fn init(nn: *Self, seed: u64) void {
-            const deamplification = 0.05;
             nn.rng_impl = std.Random.DefaultPrng.init(seed);
             nn.rng = nn.rng_impl.random();
 
@@ -109,7 +113,7 @@ fn NeuralNetworkType(comptime num_layers: usize, comptime num_neurons: []const u
 
                     layer.internal_states[neuron_id] = 0;
                     for (0..@typeInfo(@TypeOf(layer.input_weights[neuron_id])).Vector.len) |input_neuron_id| {
-                        layer.input_weights[neuron_id][input_neuron_id] = nn.rng.float(f32) * deamplification;
+                        layer.input_weights[neuron_id][input_neuron_id] = MAX_INITIAL_WEIGHT * nn.rng.float(f32);
                         layer.input_states[neuron_id][input_neuron_id] = std.atomic.Value(ConnectionState).init(.AT_REST);
                     }
                 }
@@ -129,8 +133,8 @@ fn NeuralNetworkType(comptime num_layers: usize, comptime num_neurons: []const u
         }
 
         pub fn setInputs(self: *Self, image: []const u8, image_dims: struct { rows: usize, cols: usize }) void {
-            const amplification = 1.2;
-            for (self.internals.layer0.neurons) |neuron| {
+            const layer_id = 0;
+            for (self.internals.layers[layer_id]) |neuron| {
                 std.debug.assert(neuron.coords.x < image_dims.cols);
                 std.debug.assert(neuron.coords.y < image_dims.rows);
                 const idx = neuron.coords.y * image_dims.cols + neuron.coords.x;
@@ -139,8 +143,8 @@ fn NeuralNetworkType(comptime num_layers: usize, comptime num_neurons: []const u
                 //     .{ neuron.id.neuron, neuron.coords.x, neuron.coords.y, idx },
                 // );
                 if (image[idx] > 0) {
-                    const state = @as(f32, @floatFromInt(image[idx])) / std.math.maxInt(@TypeOf(image[idx])) * amplification;
-                    self.setState(0, neuron.id.neuron, state);
+                    const state = INPUT_AMPLIFICATION * @as(f32, @floatFromInt(image[idx])) / std.math.maxInt(@TypeOf(image[idx]));
+                    self.setState(layer_id, neuron.id.neuron, state);
                     if (state >= FIRE_THRESHOLD) {
                         for (&self.internals.layer1.neurons) |*dst_neuron| {
                             dst_neuron.input_states[neuron.id.neuron].store(.FIRING, .monotonic);
@@ -151,9 +155,16 @@ fn NeuralNetworkType(comptime num_layers: usize, comptime num_neurons: []const u
         }
 
         pub fn setOutputs(self: *Self, label: usize) void {
+            const layer_id = num_layers - 1;
+            std.debug.assert(label < num_neurons[layer_id]);
             // std.log.debug("label = {}", .{label});
-            std.debug.assert(label < num_neurons[num_layers - 1]);
-            self.setState(num_layers - 1, label, -FIRE_THRESHOLD);
+            for (self.internals.layers[layer_id]) |neuron| {
+                if (neuron.id.neuron == label) {
+                    self.setState(layer_id, neuron.id.neuron, -FIRE_THRESHOLD);
+                } else {
+                    self.setState(layer_id, neuron.id.neuron, -FIRE_THRESHOLD / 2.0);
+                }
+            }
         }
 
         fn NeuralNetworkTemporaryType() type {
@@ -238,20 +249,22 @@ fn NeuralNetworkType(comptime num_layers: usize, comptime num_neurons: []const u
                 const LEAK_RATE_VEC: @TypeOf(layer.internal_states) = @splat(LEAK_RATE);
 
                 layer_new_state.* = @abs(layer.internal_states);
-                const fired = layer_new_state.* >= FIRE_THRESHOLD_VEC;
-                if (relaxation_period) {
-                    layer_new_state.* = @select(f32, fired, MIN_STATE_VEC, layer_new_state.* - LEAK_RATE_VEC + layer_deltas.*);
-                } else {
-                    layer_new_state.* = @select(f32, fired, MIN_STATE_VEC, layer_new_state.* - LEAK_RATE_VEC);
-                    layer_new_state.* += layer_deltas.*;
+                if (!learn or layer_id < num_layers - 1) {
+                    const fired = layer_new_state.* >= FIRE_THRESHOLD_VEC;
+                    if (relaxation_period) {
+                        layer_new_state.* = @select(f32, fired, MIN_STATE_VEC, layer_new_state.* - LEAK_RATE_VEC + layer_deltas.*);
+                    } else {
+                        layer_new_state.* = @select(f32, fired, MIN_STATE_VEC, layer_new_state.* - LEAK_RATE_VEC);
+                        layer_new_state.* += layer_deltas.*;
+                    }
+                    layer_new_state.* = @max(layer_new_state.*, MIN_STATE_VEC);
                 }
-                layer_new_state.* = @max(layer_new_state.*, MIN_STATE_VEC);
             }
 
             // optional: learn (adjust weights)
             if (learn) {
-                // perform hebbian learning or spike-timing dependent plasticity
-                // compare layer.internal_states and layer_new_state
+                // perform hebbian learning
+                // analyze layer_new_state
                 inline for (1..num_layers) |dst_layer_id| {
                     const src_layer_id = dst_layer_id - 1;
                     const src_layer_field_name = std.fmt.comptimePrint("layer{}", .{src_layer_id});
@@ -261,22 +274,23 @@ fn NeuralNetworkType(comptime num_layers: usize, comptime num_neurons: []const u
                     const dst_layer = &@field(self.internals, dst_layer_field_name);
                     const dst_layer_new_state = &@field(new_states, dst_layer_field_name);
 
-                    const past_presynapse = src_layer_state.* >= @as(@TypeOf(src_layer_state.*), @splat(FIRE_THRESHOLD));
-                    const curr_presynapse = src_layer_new_state.* >= @as(@TypeOf(src_layer_new_state.*), @splat(FIRE_THRESHOLD));
-                    // const past_postsynapse = @abs(dst_layer.internal_state) >= @as(@TypeOf(dst_layer.internal_state), @splat(FIRE_THRESHOLD));
-                    const curr_postsynapse = dst_layer_new_state.* >= @as(@TypeOf(dst_layer_new_state.*), @splat(FIRE_THRESHOLD));
+                    const presynapse = src_layer_new_state.* >= @as(@TypeOf(src_layer_new_state.*), @splat(FIRE_THRESHOLD));
+                    const postsynapse = dst_layer_new_state.* >= @as(@TypeOf(dst_layer_new_state.*), @splat(FIRE_THRESHOLD));
 
                     for (0..num_neurons[dst_layer_id]) |dst_neuron_id| {
                         for (0..num_neurons[src_layer_id]) |src_neuron_id| {
-                            if (past_presynapse[src_neuron_id] and curr_postsynapse[dst_neuron_id]) {
+                            const learn_rate = LEARN_RATE * src_layer_new_state[src_neuron_id] * @abs(dst_layer_new_state[dst_neuron_id]);
+                            const learning = learn_rate > 0;
+                            if (learning and presynapse[src_neuron_id] and postsynapse[dst_neuron_id]) {
                                 dst_layer.input_states[dst_neuron_id][src_neuron_id].store(.STRENGTHENING, .monotonic);
-                                // dst_layer.input_weights[dst_neuron_id][src_neuron_id] *= 2;
-                            } else if (past_presynapse[src_neuron_id] and !curr_postsynapse[dst_neuron_id]) {
+                                dst_layer.input_weights[dst_neuron_id][src_neuron_id] += learn_rate;
+                            } else if (learning and presynapse[src_neuron_id] and !postsynapse[dst_neuron_id]) {
                                 dst_layer.input_states[dst_neuron_id][src_neuron_id].store(.WEAKENING, .monotonic);
-                                // dst_layer.input_weights[dst_neuron_id][src_neuron_id] /= 2;
-                                // } else if (!past_presynapse[src_neuron_id] and curr_postsynapse[dst_neuron_id]) {
-                                //     dst_layer.input_states[dst_neuron_id][src_neuron_id].store(.WEAKENING, .monotonic);
-                            } else if (curr_presynapse[src_neuron_id]) {
+                                dst_layer.input_weights[dst_neuron_id][src_neuron_id] -= learn_rate;
+                            } else if (learning and !presynapse[src_neuron_id] and postsynapse[dst_neuron_id]) {
+                                dst_layer.input_states[dst_neuron_id][src_neuron_id].store(.WEAKENING, .monotonic);
+                                dst_layer.input_weights[dst_neuron_id][src_neuron_id] -= learn_rate;
+                            } else if (presynapse[src_neuron_id]) {
                                 dst_layer.input_states[dst_neuron_id][src_neuron_id].store(.FIRING, .monotonic);
                             } else {
                                 dst_layer.input_states[dst_neuron_id][src_neuron_id].store(.AT_REST, .monotonic);
@@ -301,6 +315,7 @@ fn NeuralNetworkType(comptime num_layers: usize, comptime num_neurons: []const u
                 const dst_layer = &@field(self.internals, dst_layer_field_name);
 
                 for (0..num_neurons[dst_layer_id]) |dst_neuron_id| {
+                    // syncing with NeuronInfo.internal_state with LayerType.internal_states[neuron_id]
                     dst_layer.neurons[dst_neuron_id].internal_state.store(dst_layer.internal_states[dst_neuron_id], .monotonic);
 
                     if (!learn) {
