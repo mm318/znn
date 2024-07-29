@@ -61,7 +61,11 @@ pub const Controller = struct {
 
     var _matrix: [16]gl.Double = undefined;
     var _matrixInverse: [16]gl.Double = undefined;
-    var zprReferencePoint: [4]gl.Float = [_]gl.Float{0} ** 4;
+    var zprReferencePoint: [3]gl.Float = [_]gl.Float{0} ** 3;
+
+    pub fn setReferencePoint(x: gl.Float, y: gl.Float, z: gl.Float) void {
+        zprReferencePoint = .{ x, y, z };
+    }
 
     pub const Button = enum {
         left,

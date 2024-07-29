@@ -9,7 +9,10 @@ const Visualizer = @import("lib/lib.zig").Visualizer;
 const DEFAULT_WIN_WIDTH = 1280;
 const DEFAULT_WIN_HEIGHT = 960;
 
+var pause = std.atomic.Value(bool).init(false);
 var stop = std.atomic.Value(bool).init(false);
+var wait_lock = std.Thread.Mutex{};
+var signal = std.Thread.Condition{};
 
 fn sdlPanic() noreturn {
     const str = @as(?[*:0]const u8, SDL.SDL_GetError()) orelse "unknown error";
@@ -24,8 +27,8 @@ fn initialOrientiation(win_width: i32, win_height: i32) void {
     const x_initial = @divTrunc(win_width, 2);
     const y_initial = @divTrunc(win_height, 2);
 
-    const trans_x_displacement = -400;
-    const trans_y_displacement = -70;
+    const trans_x_displacement = 50;
+    const trans_y_displacement = 0;
     const trans_x_final = x_initial + trans_x_displacement;
     const trans_y_final = y_initial + trans_y_displacement;
     Visualizer.handleMouseButton(.right, .{ .click = .{ .x = x_initial, .y = y_initial } });
@@ -44,7 +47,7 @@ fn initialOrientiation(win_width: i32, win_height: i32) void {
     Visualizer.handleMouseMotion(x_initial, rot_y_final);
     Visualizer.handleMouseButton(.left, .{ .release = .{ .x = x_initial, .y = rot_y_final } });
 
-    const zoom_y_displacement = -80;
+    const zoom_y_displacement = -90;
     const zoom_y_final = y_initial + zoom_y_displacement;
     Visualizer.handleMouseButton(.middle, .{ .click = .{ .x = x_initial, .y = y_initial } });
     Visualizer.handleMouseMotion(x_initial, zoom_y_final);
@@ -130,12 +133,21 @@ fn display(neural_network: *const NeuralNetwork) !void {
                         SDL.SDL_SCANCODE_1 => {
                             Visualizer.toggleNeuralNetworkActivity();
                         },
+                        SDL.SDL_SCANCODE_D => {
+                            Visualizer.dev_draw_flag = !Visualizer.dev_draw_flag;
+                        },
+                        SDL.SDL_SCANCODE_SPACE => {
+                            pause.store(!pause.load(.monotonic), .monotonic);
+                            signal.broadcast();
+                        },
                         SDL.SDL_SCANCODE_ESCAPE => {
                             stop.store(true, .monotonic);
+                            pause.store(false, .monotonic);
+                            signal.broadcast();
                             break :mainLoop;
                         },
                         else => {
-                            std.log.info("key pressed: {}\n", .{ev.key.keysym.scancode});
+                            std.log.info("key pressed: {}", .{ev.key.keysym.scancode});
                         },
                     }
                 },
@@ -158,24 +170,44 @@ pub fn main() !void {
     defer std.process.argsFree(allocator, args);
     if (args.len < 2) {
         std.log.err("Missing argument: Images filename!", .{});
-        std.process.exit(1);
+        return error.InvalidParam;
+    } else if (args.len < 3) {
+        std.log.err("Missing argument: Labels filename!", .{});
+        return error.InvalidParam;
     }
     const images_filename = args[1];
+    const labels_filename = args[2];
 
     const images = Mnist.load_images(allocator, images_filename);
     defer images.deinit();
+    const labels = Mnist.load_labels(allocator, labels_filename);
+    defer labels.deinit();
+    if (images.list.items.len != labels.list.len) {
+        std.log.err("Number of Images and Labels don't match!", .{});
+        return error.InvalidParam;
+    }
 
-    const nn = NeuralNetwork.new(allocator, 4, &.{ 784, 1000, 1000, 9 }, 0);
+    const nn = NeuralNetwork.new(allocator, 4, &.{ 784, 1000, 1000, 10 }, 0);
     defer allocator.destroy(nn);
     nn.setInputs(images.list.items[0], .{ .rows = images.image_dims.rows, .cols = images.image_dims.cols });
 
     const vis_thread = try std.Thread.spawn(.{}, display, .{&nn.interface});
     defer vis_thread.join();
 
+    const learn = true;
+    if (learn) {
+        nn.setOutputs(labels.list[0]);
+    }
+
+    wait_lock.lock();
+    defer wait_lock.unlock();
     for (0..100) |i| {
-        nn.timestep(false);
+        nn.timestep(learn);
         std.log.info("at timestep {}", .{i});
         std.time.sleep(1 * std.time.ns_per_s);
+        while (pause.load(.monotonic)) {
+            signal.wait(&wait_lock);
+        }
         if (stop.load(.monotonic)) {
             break;
         }

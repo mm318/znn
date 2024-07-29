@@ -12,6 +12,7 @@ const C = struct {
 
 var neural_network: *const NeuralNetwork = undefined;
 var show_activity_flag = false;
+pub var dev_draw_flag = false;
 
 pub fn init(loader: zopengl.LoaderFn, display_width: gl.Sizei, display_height: gl.Sizei, nn: *const NeuralNetwork) void {
     zopengl.loadCompatProfileExt(loader) catch |err| {
@@ -27,6 +28,7 @@ pub fn init(loader: zopengl.LoaderFn, display_width: gl.Sizei, display_height: g
     gl.enable(gl.BLEND);
     gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
     Camera.initView(display_width, display_height);
+    Camera.Controller.setReferencePoint(0, 0, @as(gl.Float, @floatFromInt(neural_network.layers.len - 1)) * z_spacing / 2);
 }
 
 const x_spacing: gl.Float = 0.1;
@@ -64,10 +66,14 @@ fn drawNodes() void {
             std.debug.assert(neuron.id.neuron == neuron_id);
 
             const neuron_state = neuron.internal_state.load(.monotonic);
-            if (neuron_state > 0) {
-                gl.color4f(C.blue.r, C.blue.g, C.blue.b, neuron_state);
+            if (neuron_state <= -NeuralNetwork.FIRE_THRESHOLD) {
+                gl.color4f(C.green.r, C.green.g, C.green.b, 1.0);
+            } else if (neuron_state >= NeuralNetwork.FIRE_THRESHOLD) {
+                gl.color4f(C.white.r, C.white.g, C.white.b, 1.0);
+            } else if (neuron_state > 0) {
+                gl.color4f(C.blue.r, C.blue.g, C.blue.b, 0.3 * neuron_state);
             } else {
-                gl.color4f(C.gray.r, C.gray.g, C.gray.b, 0.15);
+                gl.color4f(C.gray.r, C.gray.g, C.gray.b, 0.3);
             }
 
             const pos = nodePosition(neuron, layer_grid_dim);
@@ -93,11 +99,24 @@ fn drawEdges() void {
             const src_pos = nodePosition(src_neuron, src_layer_grid_dim);
             for (0..neural_network.layers[dst_layer_id].len) |dst_neuron_id| {
                 const dst_neuron = neural_network.layers[dst_layer_id][dst_neuron_id];
-                const dst_pos = nodePosition(dst_neuron, dst_layer_grid_dim);
+                const connection_state = dst_neuron.input_states[src_neuron_id].load(.monotonic);
+                const line_color = switch (connection_state) {
+                    .AT_REST => C.gray,
+                    .FIRING => C.white,
+                    .WEAKENING => C.red,
+                    .STRENGTHENING => C.green,
+                };
+                const line_transparency: gl.Float = switch (connection_state) {
+                    .AT_REST => 0.01 * dead_line_transparency,
+                    .FIRING => dead_line_transparency,
+                    .WEAKENING => live_line_transparency,
+                    .STRENGTHENING => live_line_transparency,
+                };
 
-                if (dst_neuron.input_states[src_neuron_id].load(.monotonic) == .FIRING) {
+                if (connection_state != .AT_REST) {
+                    const dst_pos = nodePosition(dst_neuron, dst_layer_grid_dim);
                     gl.begin(gl.LINES);
-                    gl.color4f(C.white.r, C.white.g, C.white.b, live_line_transparency);
+                    gl.color4f(line_color.r, line_color.g, line_color.b, line_transparency);
                     gl.vertex3f(src_pos[0], src_pos[1], src_z);
                     gl.vertex3f(dst_pos[0], dst_pos[1], dst_z);
                     gl.end();
@@ -134,10 +153,11 @@ fn drawHudInfo(display_width: gl.Sizei, display_height: gl.Sizei) void {
     var charbuf: [1024]u8 = undefined;
     const info_str = std.fmt.bufPrint(&charbuf,
         \\Timestep: {}
-        \\
-        \\Press H for help
+        \\Press 1 to toggle connections
+        \\Press space to pause/resume
+        \\Press ESC to quit
     , .{neural_network.timestep.load(.monotonic)}) catch @panic("buffer overflow");
-    Text.drawText(info_str, 10, 10, 6, 9, 2, C.white);
+    Text.drawText(info_str, 10, 10, 6, 9, 5, 2, C.white);
 }
 
 pub fn reshapeNetwork(display_width: gl.Sizei, display_height: gl.Sizei) void {
@@ -157,18 +177,20 @@ pub fn idleNetwork(display_width: gl.Sizei, display_height: gl.Sizei) void {
     drawNodes();
     drawEdges();
 
-    // DEBUG: Draw a red x-axis, a green y-axis, and a blue z-axis. Each of the axes are ten units long.
-    gl.begin(gl.LINES);
-    gl.color3f(C.red.r, C.red.g, C.red.b);
-    gl.vertex3f(0, 0, 0);
-    gl.vertex3f(10, 0, 0);
-    gl.color3f(C.green.r, C.green.g, C.green.b);
-    gl.vertex3f(0, 0, 0);
-    gl.vertex3f(0, 10, 0);
-    gl.color3f(C.blue.r, C.blue.g, C.blue.b);
-    gl.vertex3f(0, 0, 0);
-    gl.vertex3f(0, 0, 10);
-    gl.end();
+    if (dev_draw_flag) {
+        // DEBUG: Draw a red x-axis, a green y-axis, and a blue z-axis. Each of the axes are ten units long.
+        gl.begin(gl.LINES);
+        gl.color3f(C.red.r, C.red.g, C.red.b);
+        gl.vertex3f(0, 0, 0);
+        gl.vertex3f(10, 0, 0);
+        gl.color3f(C.green.r, C.green.g, C.green.b);
+        gl.vertex3f(0, 0, 0);
+        gl.vertex3f(0, 10, 0);
+        gl.color3f(C.blue.r, C.blue.g, C.blue.b);
+        gl.vertex3f(0, 0, 0);
+        gl.vertex3f(0, 0, 10);
+        gl.end();
+    }
 
     drawHudInfo(display_width, display_height);
 

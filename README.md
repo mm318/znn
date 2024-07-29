@@ -2,6 +2,7 @@
 
 Implementation of a spiking neural network with visualization in Zig.
 
+![Example visualization](docs/screenshot.png "Example visualization")
 
 ## Usage
 
@@ -21,7 +22,7 @@ zig build -Doptimize=ReleaseSafe    # for release build (recommended)
 
 To run (requires MNIST training images and labels):
 ```bash
-zig build -Doptimize=ReleaseSafe run -- train-images.idx3-ubyte train-labels.idx1-ubyte
+zig build -Doptimize=ReleaseSafe run -- path/to/train-images.idx3-ubyte path/to/train-labels.idx1-ubyte
 ```
 
 ### Develop
